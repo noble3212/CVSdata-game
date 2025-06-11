@@ -1,0 +1,23 @@
+body {
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+#map-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.region {
+  width: 100px;
+  height: 100px;
+  margin: 5px;
+  border: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.region.active {
+  background-color: green;
+  color: white;
+}
