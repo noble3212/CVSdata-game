@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simple RTS Map Game</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+    crossorigin=""
+  />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 10px;
+      background: #f9f9f9;
+      text-align: center;
+    }
+    #map {
+      height: 60vh;
+      width: 90vw;
+      max-width: 1000px;
+      min-width: 300px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      display: block;
+    }
+    #fileInput {
+      display: block;
+      margin: 0 auto;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Simple RTS Map Game - Upload CSV to Start</h2>
+<p>CSV must have columns: <b>Name, Latitude, Longitude</b></p>
+
+<input type="file" id="fileInput" accept=".csv" />
+
+<div id="map"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+
+<script>
+  let map, markersGroup;
+  let territoryState = {};
+  let aiMoney = 0;
+  let aiGDP = 0;
+  let aiName = "AI";
+  let tickInterval = null;
+  let aiInterval = null;
+
+  function initMap() {
+    if (map) return;
+    map = L.map('map').setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+    }).addTo(map);
+    markersGroup = L.layerGroup().addTo(map);
+  }
+
+  initMap();
+
+  document.getElementById('fileInput').addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: function(results) {
+        plotDataOnMap(results.data);
+      },
+      error: function(err) {
+        alert("Error parsing CSV: " + err.message);
+      }
+    });
+  });
+
+  function randomGDP() {
+    // Random GDP between 1000 and 100000 for demo
+    return Math.floor(Math.random() * 99000) + 1000;
+  }
+
+  function plotDataOnMap(data) {
+    markersGroup.clearLayers();
+    territoryState = {};
+    aiMoney = 0;
+    aiGDP = 0;
+    if (tickInterval) clearInterval(tickInterval);
+    if (aiInterval) clearInterval(aiInterval);
+
+    let points = [];
+
+    data.forEach(row => {
+      const lat = parseFloat(row['Latitude']);
+      const lon = parseFloat(row['Longitude']);
+      const name = row['Name'] || 'Unknown';
+
+      if (!isNaN(lat) && !isNaN(lon)) {
+        const key = name;
+        const gdp = randomGDP();
+        territoryState[key] = {
+          owner: null,
+          lat: lat,
+          lon: lon,
+          marker: null,
+          gdp: gdp,
+          money: 0
+        };
+
+        const marker = L.circleMarker([lat, lon], {
+          radius: 8,
+          fillColor: '#666',
+          color: '#000',
+          weight: 1,
+          opacity: 1,
+          fillOpacity: 0.5,
+          className: 'territory-marker'
+        });
+
+        marker.bindPopup(popupContent(key));
+        marker.on('click', () => {
+          marker.openPopup();
+        });
+
+        marker.addTo(markersGroup);
+        territoryState[key].marker = marker;
+        points.push([lat, lon]);
+      }
+    });
+
+    if (points.length === 0) {
+      alert('No valid Latitude/Longitude found in CSV.');
+      return;
+    }
+
+    const bounds = markersGroup.getBounds();
+    if (points.length === 1 || !bounds.isValid()) {
+      map.setView(points[0], 10);
+    } else {
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+
+    setTimeout(() => map.invalidateSize(), 200);
+
+    // Start game logic
+    tickInterval = setInterval(gameTick, 2000); // every 2 seconds
+    aiInterval = setInterval(aiClaimLogic, 3000); // AI claims every 3 seconds
+  }
+
+  function popupContent(name) {
+    const t = territoryState[name];
+    return `<b>${name}</b><br>
+      Owner: ${t.owner || 'Neutral'}<br>
+      Money: $${t.money.toLocaleString()}<br>
+      GDP: $${t.gdp.toLocaleString()}<br>
+      <button onclick="claimTerritory('${name}')">${t.owner === 'Player' ? 'Unclaim' : 'Claim'}</button>`;
+  }
+
+  function claimTerritory(name) {
+    const territory = territoryState[name];
+    if (!territory) return;
+
+    if (territory.owner === 'Player') {
+      territory.owner = null;
+    } else {
+      territory.owner = 'Player';
+    }
+
+    updateMarker(territory, name);
+  }
+
+  window.claimTerritory = claimTerritory;
+
+  function updateMarker(territory, name) {
+    const marker = territory.marker;
+    let fillColor = '#666';
+    if (territory.owner === 'Player') fillColor = 'green';
+    else if (territory.owner === aiName) fillColor = 'red';
+
+    marker.setStyle({
+      fillColor: fillColor,
+      fillOpacity: territory.owner ? 0.8 : 0.5,
+    });
+
+    marker.setPopupContent(popupContent(name));
+  }
+
+  function aiClaimLogic() {
+    // AI claims a random unclaimed city
+    const unclaimed = Object.entries(territoryState)
+      .filter(([_, t]) => !t.owner);
+    if (unclaimed.length === 0) return;
+    const [name, territory] = unclaimed[Math.floor(Math.random() * unclaimed.length)];
+    territory.owner = aiName;
+    updateMarker(territory, name);
+  }
+
+  function gameTick() {
+    // Each city generates money based on GDP
+    let playerMoney = 0, playerGDP = 0;
+    aiMoney = 0; aiGDP = 0;
+    Object.entries(territoryState).forEach(([name, t]) => {
+      if (t.owner) {
+        t.money += Math.floor(t.gdp / 10); // Each tick, city earns 10% of GDP
+        if (t.owner === 'Player') {
+          playerMoney += t.money;
+          playerGDP += t.gdp;
+        } else if (t.owner === aiName) {
+          aiMoney += t.money;
+          aiGDP += t.gdp;
+        }
+      }
+      updateMarker(t, name);
+    });
+    // Optionally, display player/AI stats somewhere
+    document.getElementById('stats').innerHTML =
+      `<b>Player</b> - Cities: ${Object.values(territoryState).filter(t=>t.owner==='Player').length}, Total Money: $${playerMoney.toLocaleString()}, Total GDP: $${playerGDP.toLocaleString()}<br>
+       <b>AI</b> - Cities: ${Object.values(territoryState).filter(t=>t.owner===aiName).length}, Total Money: $${aiMoney.toLocaleString()}, Total GDP: $${aiGDP.toLocaleString()}`;
+  }
+
+  window.addEventListener('resize', () => {
+    if (map) map.invalidateSize();
+  });
+</script>
+
+<div id="stats" style="margin:20px; font-size:1.1em;"></div>
+
+</body>
+</html>
